@@ -1,6 +1,5 @@
 use std::collections::HashMap;
 
-use wgpu::Instance;
 use winit::{
     event::{Event, WindowEvent},
     event_loop::EventLoop,
@@ -11,14 +10,16 @@ use crate::context::Context;
 
 pub struct Studio {
     event_loop: EventLoop<()>,
-    windows: HashMap<WindowId, Window>,
-    draws: HashMap<WindowId, Box<dyn Fn()>>,
+    contexts: HashMap<WindowId, Context>,
+    redraws: HashMap<WindowId, Box<dyn Fn(&Context, u32)>>,
 }
 
 impl Studio {
-    pub fn run(self: Self) {
+    pub fn run(mut self: Self) {
+        let mut frame: u32 = 0;
+
         self.event_loop.run(move |event, _target, control_flow| {
-            control_flow.set_wait();
+            control_flow.set_poll();
 
             match event {
                 Event::WindowEvent {
@@ -27,12 +28,32 @@ impl Studio {
                 } => {
                     control_flow.set_exit();
                 }
+                Event::WindowEvent {
+                    window_id,
+                    event: WindowEvent::Resized(size),
+                } => {
+                    let ctx = self
+                        .contexts
+                        .get_mut(&window_id)
+                        .expect("Couldn't retrieve Context for window_id.");
+
+                    ctx.resize(size);
+                }
                 Event::RedrawRequested(window_id) => {
-                    let draw = self
-                        .draws
+                    let context = self
+                        .contexts
                         .get(&window_id)
-                        .expect("Couldn't find draw callback.");
-                    draw();
+                        .expect("Couldn't retrieve Context for window_id.");
+
+                    let redraw = self
+                        .redraws
+                        .get(&window_id)
+                        .expect("Couldn't retrieve Redraw call for window_id.");
+
+                    redraw(&context, frame);
+
+                    frame += 1;
+                    context.window.request_redraw();
                 }
 
                 _ => (),
@@ -40,15 +61,15 @@ impl Studio {
         });
     }
 
-    pub async fn canvas<F: Fn() + 'static>(self: &mut Self, setup: fn(Context) -> F) {
+    pub async fn canvas<F: Fn(&Context, u32) + 'static>(self: &mut Self, setup: fn(&Context) -> F) {
         let window = Window::new(&self.event_loop).expect("Couldn't create window.");
-        let instance = Instance::default();
-        let context = Context::new(&window, &instance).await;
+        let window_id = window.id();
 
-        let draw = setup(context);
+        let context = Context::new(window).await;
+        let redraw = setup(&context);
 
-        self.draws.insert(window.id(), Box::new(draw));
-        self.windows.insert(window.id(), window);
+        self.contexts.insert(window_id, context);
+        self.redraws.insert(window_id, Box::new(redraw));
     }
 }
 
@@ -56,8 +77,8 @@ impl Default for Studio {
     fn default() -> Self {
         Studio {
             event_loop: EventLoop::new(),
-            windows: HashMap::new(),
-            draws: HashMap::new(),
+            contexts: HashMap::new(),
+            redraws: HashMap::new(),
         }
     }
 }
