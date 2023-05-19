@@ -65,7 +65,10 @@ pub fn new(context: &Context) -> RenderPipeline {
             }),
             primitive: wgpu::PrimitiveState::default(),
             depth_stencil: None,
-            multisample: wgpu::MultisampleState::default(),
+            multisample: wgpu::MultisampleState {
+                count: 4,
+                ..Default::default()
+            },
             multiview: None,
         });
 
