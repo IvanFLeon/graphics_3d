@@ -3,12 +3,10 @@ use std::f32::consts::PI;
 use glam::Vec4;
 use wgpu::{
     util::{BufferInitDescriptor, DeviceExt},
-    Buffer,
+    Buffer, IndexFormat, RenderPass,
 };
 
 use crate::context::Context;
-
-use super::Renderer;
 
 pub struct GeometryBuffer {
     pub vertex_buffer: Buffer,
@@ -16,11 +14,9 @@ pub struct GeometryBuffer {
 }
 
 impl GeometryBuffer {
-    pub fn draw<'a>(&'a self, renderer: &mut Renderer<'a>) {
-        let Renderer(rpass) = renderer;
-
+    pub fn draw<'a>(&'a self, rpass: &'a mut RenderPass<'a>) {
         rpass.set_vertex_buffer(0, self.vertex_buffer.slice(..));
-        rpass.set_index_buffer(self.index_buffer.slice(..), wgpu::IndexFormat::Uint32);
+        rpass.set_index_buffer(self.index_buffer.slice(..), IndexFormat::Uint32);
         rpass.draw_indexed(0..(self.index_buffer.size() as u32 / 4), 0, 0..1);
     }
 }

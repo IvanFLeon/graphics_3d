@@ -11,7 +11,7 @@ use crate::context::Context;
 pub struct Studio {
     event_loop: EventLoop<()>,
     contexts: HashMap<WindowId, Context>,
-    redraws: HashMap<WindowId, Box<dyn Fn(&Context, u32)>>,
+    redraws: HashMap<WindowId, Box<dyn FnMut(&Context, u32)>>,
 }
 
 impl Studio {
@@ -47,7 +47,7 @@ impl Studio {
 
                     let redraw = self
                         .redraws
-                        .get(&window_id)
+                        .get_mut(&window_id)
                         .expect("Couldn't retrieve Redraw call for window_id.");
 
                     redraw(&context, frame);
@@ -61,7 +61,10 @@ impl Studio {
         });
     }
 
-    pub async fn canvas<F: Fn(&Context, u32) + 'static>(self: &mut Self, setup: fn(&Context) -> F) {
+    pub async fn canvas<F: FnMut(&Context, u32) + 'static>(
+        self: &mut Self,
+        setup: fn(&Context) -> F,
+    ) {
         let window = Window::new(&self.event_loop).expect("Couldn't create window.");
         let window_id = window.id();
 

@@ -1,15 +1,18 @@
 use std::num::NonZeroU64;
 
 use wgpu::{
-    BindGroupLayoutDescriptor, BindGroupLayoutEntry, BindingType, BufferBindingType, RenderPass,
-    RenderPipeline, ShaderStages,
+    BindGroupLayoutDescriptor, BindGroupLayoutEntry, BindingType, BufferBindingType, IndexFormat,
+    RenderPass, RenderPipeline, ShaderStages,
 };
 
 use crate::context::Context;
 
-use super::Renderer;
+use super::geometry::GeometryBuffer;
 
-pub struct D2(RenderPipeline);
+pub struct D2 {
+    pub render_pipeline: RenderPipeline,
+    pub geometry_buffers: Vec<GeometryBuffer>,
+}
 
 impl D2 {
     pub fn new(context: &Context) -> D2 {
@@ -80,17 +83,25 @@ impl D2 {
                     multiview: None,
                 });
 
-        D2(render_pipeline)
+        D2 {
+            render_pipeline,
+            geometry_buffers: vec![],
+        }
     }
 
-    pub fn renderer<'a>(
-        &'a self,
-        render_pass: impl Into<RenderPass<'a>>,
-        context: &'a Context,
-    ) -> Renderer {
-        let D2(render_pipeline) = self;
-        let mut render_pass = render_pass.into();
-        render_pass.set_pipeline(render_pipeline);
-        Renderer(render_pass)
+    pub fn add(&mut self, geometry_buffer: GeometryBuffer) {
+        self.geometry_buffers.push(geometry_buffer);
+    }
+
+    pub fn render<'a>(&'a self, mut rpass: RenderPass<'a>) -> RenderPass<'a> {
+        rpass.set_pipeline(&self.render_pipeline);
+
+        for g in &self.geometry_buffers {
+            rpass.set_vertex_buffer(0, g.vertex_buffer.slice(..));
+            rpass.set_index_buffer(g.index_buffer.slice(..), IndexFormat::Uint32);
+            rpass.draw_indexed(0..(g.index_buffer.size() as u32 / 4), 0, 0..1);
+        }
+
+        rpass
     }
 }

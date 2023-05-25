@@ -101,7 +101,7 @@ impl Context {
             create_multisample_texture_view(&self.device, &self.surface_config);
     }
 
-    pub fn draw(&self, draw: impl Fn(RenderPass)) {
+    pub fn draw(&self, mut draw: impl FnMut(RenderPass)) {
         let surface_texture = self
             .surface
             .get_current_texture()
