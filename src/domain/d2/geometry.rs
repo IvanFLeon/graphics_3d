@@ -27,19 +27,25 @@ pub struct Geometry {
 }
 
 impl Geometry {
-    pub fn buffer(&self, context: &Context) -> GeometryBuffer {
-        GeometryBuffer {
-            vertex_buffer: context.device.create_buffer_init(&BufferInitDescriptor {
-                label: None,
-                contents: bytemuck::cast_slice(&self.vertexes[..]),
-                usage: wgpu::BufferUsages::VERTEX,
-            }),
+    pub fn buffer(&self, ctx: &Context) -> GeometryBuffer {
+        let shared_context = ctx.0.read().unwrap();
 
-            index_buffer: context.device.create_buffer_init(&BufferInitDescriptor {
-                label: None,
-                contents: bytemuck::cast_slice(&self.indexes[..]),
-                usage: wgpu::BufferUsages::INDEX,
-            }),
+        GeometryBuffer {
+            vertex_buffer: shared_context
+                .device
+                .create_buffer_init(&BufferInitDescriptor {
+                    label: None,
+                    contents: bytemuck::cast_slice(&self.vertexes[..]),
+                    usage: wgpu::BufferUsages::VERTEX,
+                }),
+
+            index_buffer: shared_context
+                .device
+                .create_buffer_init(&BufferInitDescriptor {
+                    label: None,
+                    contents: bytemuck::cast_slice(&self.indexes[..]),
+                    usage: wgpu::BufferUsages::INDEX,
+                }),
         }
     }
 }
@@ -48,15 +54,17 @@ pub fn circle(res: u32) -> Geometry {
     let mut vertexes: Vec<Vec4> = vec![];
     let mut indexes: Vec<u32> = vec![];
 
-    vertexes.push(Vec4::new(0., 0., 0., 0.));
+    vertexes.push(Vec4::new(0., 0., 0., 1.));
 
     let ph = (PI * 2.) / (res as f32);
     let mut th = 0.;
 
     for i in 1..=res {
-        let x = f32::cos(th) * 0.5;
-        let y = f32::sin(th) * 0.5;
+        // let x = f32::cos(th) * 0.5;
+        // let y = f32::sin(th) * 0.5;
 
+        let x = f32::cos(th) * 200.;
+        let y = f32::sin(th) * 200.;
         vertexes.push(Vec4::new(x, y, 0., 1.));
 
         indexes.push(0);

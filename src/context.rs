@@ -1,10 +1,12 @@
+use std::sync::{Arc, RwLock};
+
 use wgpu::{
     Device, Instance, Queue, RenderPass, Surface, SurfaceConfiguration, TextureDescriptor,
     TextureFormat, TextureView, TextureViewDescriptor,
 };
 use winit::{dpi::PhysicalSize, window::Window};
 
-pub struct Context {
+pub struct SharedContext {
     pub(crate) window: Window,
     pub(crate) surface: Surface,
     pub(crate) surface_config: SurfaceConfiguration,
@@ -14,27 +16,11 @@ pub struct Context {
     pub(crate) multisample_texture_view: TextureView,
 }
 
-fn create_multisample_texture_view(device: &Device, config: &SurfaceConfiguration) -> TextureView {
-    device
-        .create_texture(&TextureDescriptor {
-            label: None,
-            size: wgpu::Extent3d {
-                width: config.width,
-                height: config.height,
-                depth_or_array_layers: 1,
-            },
-            mip_level_count: 1,
-            sample_count: 4,
-            dimension: wgpu::TextureDimension::D2,
-            format: config.view_formats[0],
-            usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
-            view_formats: &[],
-        })
-        .create_view(&TextureViewDescriptor::default())
-}
+#[derive(Clone)]
+pub struct Context(pub Arc<RwLock<SharedContext>>);
 
 impl Context {
-    pub async fn new(window: Window) -> Context {
+    pub async fn new(window: Window) -> Self {
         let instance = Instance::default();
 
         let surface = unsafe { instance.create_surface(&window) }
@@ -82,7 +68,7 @@ impl Context {
 
         let multisample_texture_view = create_multisample_texture_view(&device, &surface_config);
 
-        Context {
+        Context(Arc::new(RwLock::new(SharedContext {
             window,
             surface,
             surface_config,
@@ -90,47 +76,75 @@ impl Context {
             queue,
             texture_format,
             multisample_texture_view,
-        }
+        })))
     }
 
     pub fn resize(&mut self, size: PhysicalSize<u32>) {
-        self.surface_config.width = size.width;
-        self.surface_config.height = size.height;
-        self.surface.configure(&self.device, &self.surface_config);
-        self.multisample_texture_view =
-            create_multisample_texture_view(&self.device, &self.surface_config);
+        let mut ctx = self.0.write().unwrap();
+        ctx.surface_config.width = size.width;
+        ctx.surface_config.height = size.height;
+        ctx.surface.configure(&ctx.device, &ctx.surface_config);
+        ctx.multisample_texture_view =
+            create_multisample_texture_view(&ctx.device, &ctx.surface_config);
     }
 
-    pub fn draw(&self, mut draw: impl FnMut(RenderPass)) {
-        let surface_texture = self
-            .surface
-            .get_current_texture()
-            .expect("Failed to acquire next swapchain texture");
+    pub fn draw(&self, mut draw: impl FnMut(RenderPass, u32)) -> impl FnMut(u32) {
+        let ctx = self.0.clone();
 
-        let view = surface_texture
-            .texture
-            .create_view(&TextureViewDescriptor::default());
+        move |frame| {
+            let ctx = ctx.read().unwrap();
 
-        let mut encoder = self
-            .device
-            .create_command_encoder(&wgpu::CommandEncoderDescriptor::default());
+            let surface_texture = ctx
+                .surface
+                .get_current_texture()
+                .expect("Failed to acquire next swapchain texture");
 
-        let render_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+            let view = surface_texture
+                .texture
+                .create_view(&TextureViewDescriptor::default());
+
+            let mut encoder = ctx
+                .device
+                .create_command_encoder(&wgpu::CommandEncoderDescriptor::default());
+
+            let render_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                label: None,
+                color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                    view: &ctx.multisample_texture_view,
+                    resolve_target: Some(&view),
+                    ops: wgpu::Operations {
+                        load: wgpu::LoadOp::Clear(wgpu::Color::WHITE),
+                        store: true,
+                    },
+                })],
+                depth_stencil_attachment: None,
+            });
+
+            draw(render_pass, frame);
+
+            ctx.queue.submit(Some(encoder.finish()));
+            surface_texture.present();
+
+            ctx.window.request_redraw();
+        }
+    }
+}
+
+fn create_multisample_texture_view(device: &Device, config: &SurfaceConfiguration) -> TextureView {
+    device
+        .create_texture(&TextureDescriptor {
             label: None,
-            color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                view: &self.multisample_texture_view,
-                resolve_target: Some(&view),
-                ops: wgpu::Operations {
-                    load: wgpu::LoadOp::Clear(wgpu::Color::WHITE),
-                    store: true,
-                },
-            })],
-            depth_stencil_attachment: None,
-        });
-
-        draw(render_pass);
-
-        self.queue.submit(Some(encoder.finish()));
-        surface_texture.present();
-    }
+            size: wgpu::Extent3d {
+                width: config.width,
+                height: config.height,
+                depth_or_array_layers: 1,
+            },
+            mip_level_count: 1,
+            sample_count: 4,
+            dimension: wgpu::TextureDimension::D2,
+            format: config.view_formats[0],
+            usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
+            view_formats: &[],
+        })
+        .create_view(&TextureViewDescriptor::default())
 }
