@@ -1,8 +1,10 @@
 use std::sync::{Arc, RwLock};
 
 use wgpu::{
-    Device, Instance, Queue, RenderPass, Surface, SurfaceConfiguration, TextureDescriptor,
-    TextureFormat, TextureView, TextureViewDescriptor,
+    CommandEncoderDescriptor, Device, Extent3d, Instance, LoadOp, Operations, PowerPreference,
+    Queue, RenderPass, RenderPassColorAttachment, RenderPassDescriptor, RequestAdapterOptions,
+    Surface, SurfaceConfiguration, TextureDescriptor, TextureDimension, TextureFormat,
+    TextureUsages, TextureView, TextureViewDescriptor,
 };
 use winit::{dpi::PhysicalSize, window::Window};
 
@@ -22,30 +24,23 @@ impl SharedContext {
     pub async fn new(window: Window) -> Self {
         let instance = Instance::default();
 
-        let surface = unsafe { instance.create_surface(&window) }
-            .expect("Surface not supported by any backend.");
+        let surface = unsafe { instance.create_surface(&window) }.unwrap();
 
-        let adapter = instance
-            .request_adapter(&wgpu::RequestAdapterOptions {
-                power_preference: wgpu::PowerPreference::HighPerformance,
-                force_fallback_adapter: false,
-                compatible_surface: Some(&surface),
-            })
-            .await
-            .expect("No adapter found with the specified requirements.");
+        let options = RequestAdapterOptions {
+            power_preference: PowerPreference::HighPerformance,
+            force_fallback_adapter: false,
+            compatible_surface: Some(&surface),
+        };
 
-        let (device, queue) = adapter
-            .request_device(
-                &wgpu::DeviceDescriptor {
-                    label: None,
-                    features: wgpu::Features::MULTI_DRAW_INDIRECT,
-                    limits: wgpu::Limits::downlevel_webgl2_defaults()
-                        .using_resolution(adapter.limits()),
-                },
-                None,
-            )
-            .await
-            .expect("Failed to create device");
+        let adapter = instance.request_adapter(&options).await.unwrap();
+
+        let descriptor = wgpu::DeviceDescriptor {
+            label: None,
+            features: wgpu::Features::MULTI_DRAW_INDIRECT,
+            limits: wgpu::Limits::downlevel_webgl2_defaults().using_resolution(adapter.limits()),
+        };
+
+        let (device, queue) = adapter.request_device(&descriptor, None).await.unwrap();
 
         //Swapchain
         let surface_capabilities = surface.get_capabilities(&adapter);
@@ -87,62 +82,74 @@ impl SharedContext {
     }
 }
 
-pub fn draw(context: &Context, mut draw: impl FnMut(RenderPass, u32)) -> impl FnMut(u32) {
+pub fn draw(context: &Context, mut fn_draw: impl FnMut(RenderPass, u32)) -> impl FnMut(u32) {
     let context = context.clone();
 
     move |frame| {
         let context = context.read().unwrap();
 
-        let surface_texture = context
-            .surface
-            .get_current_texture()
-            .expect("Failed to acquire next swapchain texture");
+        let queue = &context.queue;
+        let device = &context.device;
+        let window = &context.window;
+        let surface = &context.surface;
+        let multisample_texture_view = &context.multisample_texture_view;
 
-        let view = surface_texture
-            .texture
-            .create_view(&TextureViewDescriptor::default());
+        let descriptor = TextureViewDescriptor::default();
+        let surface_texture = surface.get_current_texture().unwrap();
+        let texture = &surface_texture.texture;
+        let view = texture.create_view(&descriptor);
 
-        let mut encoder = context
-            .device
-            .create_command_encoder(&wgpu::CommandEncoderDescriptor::default());
+        let descriptor = CommandEncoderDescriptor::default();
+        let mut encoder = device.create_command_encoder(&descriptor);
 
-        let render_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+        let operations = Operations {
+            load: LoadOp::Clear(wgpu::Color::WHITE),
+            store: true,
+        };
+
+        let color_attachment = RenderPassColorAttachment {
+            view: &multisample_texture_view,
+            resolve_target: Some(&view),
+            ops: operations,
+        };
+
+        let descriptor = RenderPassDescriptor {
             label: None,
-            color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                view: &context.multisample_texture_view,
-                resolve_target: Some(&view),
-                ops: wgpu::Operations {
-                    load: wgpu::LoadOp::Clear(wgpu::Color::WHITE),
-                    store: true,
-                },
-            })],
+            color_attachments: &[Some(color_attachment)],
             depth_stencil_attachment: None,
-        });
+        };
 
-        draw(render_pass, frame);
+        let render_pass = encoder.begin_render_pass(&descriptor);
 
-        context.queue.submit(Some(encoder.finish()));
+        fn_draw(render_pass, frame);
+
+        queue.submit(Some(encoder.finish()));
         surface_texture.present();
-
-        context.window.request_redraw();
+        window.request_redraw();
     }
 }
 
 fn create_multisample_texture_view(device: &Device, config: &SurfaceConfiguration) -> TextureView {
+    let size = Extent3d {
+        width: config.width,
+        height: config.height,
+        depth_or_array_layers: 1,
+    };
+
+    let texture_descriptor = TextureDescriptor {
+        label: None,
+        size,
+        mip_level_count: 1,
+        sample_count: 4,
+        dimension: TextureDimension::D2,
+        format: config.view_formats[0],
+        usage: TextureUsages::RENDER_ATTACHMENT,
+        view_formats: &[],
+    };
+
+    let view_descriptor = TextureViewDescriptor::default();
+
     device
-        .create_texture(&TextureDescriptor {
-            label: None,
-            size: wgpu::Extent3d {
-                width: config.width,
-                height: config.height,
-                depth_or_array_layers: 1,
-            },
-            mip_level_count: 1,
-            sample_count: 4,
-            dimension: wgpu::TextureDimension::D2,
-            format: config.view_formats[0],
-            usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
-            view_formats: &[],
-        })
-        .create_view(&TextureViewDescriptor::default())
+        .create_texture(&texture_descriptor)
+        .create_view(&view_descriptor)
 }

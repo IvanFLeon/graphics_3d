@@ -1,9 +1,10 @@
 use glam::{Mat4, Vec3};
 use wgpu::{
     util::{BufferInitDescriptor, DeviceExt},
-    BindGroup, BindGroupDescriptor, BindGroupEntry, BindGroupLayoutDescriptor,
-    BindGroupLayoutEntry, BindingType, BufferBindingType, IndexFormat, RenderPass, RenderPipeline,
-    ShaderStages,
+    BindGroup, BindGroupDescriptor, BindGroupEntry, BindGroupLayout, BindGroupLayoutDescriptor,
+    BindGroupLayoutEntry, BindingType, BufferBindingType, FragmentState, IndexFormat,
+    MultisampleState, PipelineLayoutDescriptor, PrimitiveState, RenderPass, RenderPipeline,
+    RenderPipelineDescriptor, ShaderStages, VertexAttribute, VertexBufferLayout, VertexState,
 };
 
 use crate::context::Context;
@@ -19,97 +20,9 @@ pub struct D2 {
 
 impl D2 {
     pub fn new(context: &Context) -> D2 {
-        let shared = context.read().unwrap();
-
-        let bind_group_layout =
-            shared
-                .device
-                .create_bind_group_layout(&BindGroupLayoutDescriptor {
-                    label: None,
-                    entries: &[BindGroupLayoutEntry {
-                        binding: 0,
-                        visibility: ShaderStages::VERTEX,
-                        ty: BindingType::Buffer {
-                            ty: BufferBindingType::Uniform,
-                            has_dynamic_offset: false,
-                            min_binding_size: wgpu::BufferSize::new(64),
-                        },
-                        count: None,
-                    }],
-                });
-
-        let pipeline_layout =
-            shared
-                .device
-                .create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-                    label: None,
-                    bind_group_layouts: &[&bind_group_layout],
-                    push_constant_ranges: &[],
-                });
-
-        let shader = shared
-            .device
-            .create_shader_module(wgpu::include_wgsl!("shader.wgsl"));
-
-        let vertex_attributes = [wgpu::VertexAttribute {
-            format: wgpu::VertexFormat::Float32x4,
-            offset: 0,
-            shader_location: 0,
-        }];
-
-        let vertex_buffer_layouts = [wgpu::VertexBufferLayout {
-            array_stride: 4 * 4,
-            step_mode: wgpu::VertexStepMode::Vertex,
-            attributes: &vertex_attributes,
-        }];
-
-        let render_pipeline =
-            shared
-                .device
-                .create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-                    label: None,
-                    layout: Some(&pipeline_layout),
-                    vertex: wgpu::VertexState {
-                        module: &shader,
-                        entry_point: "vs_main",
-                        buffers: &vertex_buffer_layouts,
-                    },
-                    fragment: Some(wgpu::FragmentState {
-                        module: &shader,
-                        entry_point: "fs_main",
-                        targets: &[Some(shared.texture_format.into())],
-                    }),
-                    primitive: wgpu::PrimitiveState::default(),
-                    depth_stencil: None,
-                    multisample: wgpu::MultisampleState {
-                        count: 4,
-                        ..Default::default()
-                    },
-                    multiview: None,
-                });
-
-        let half_width = shared.surface_config.width as f32 / 2.;
-        let half_height = shared.surface_config.height as f32 / 2.;
-
-        let orthographic =
-            Mat4::orthographic_rh_gl(-half_width, half_width, -half_height, half_height, -2., 0.);
-
-        let transform_buffer = shared.device.create_buffer_init(&BufferInitDescriptor {
-            label: None,
-            contents: bytemuck::cast_slice(orthographic.as_ref()),
-            usage: wgpu::BufferUsages::UNIFORM,
-        });
-
-        let transform = shared.device.create_bind_group(&BindGroupDescriptor {
-            label: None,
-            layout: &bind_group_layout,
-            entries: &[BindGroupEntry {
-                binding: 0,
-                resource: transform_buffer.as_entire_binding(),
-            }],
-        });
-
-        drop(shared);
+        let render_pipeline = D2::create_pipeline(context);
+        let transform_layout = &render_pipeline.get_bind_group_layout(0);
+        let transform = D2::create_transform_bind_group(context, transform_layout);
 
         D2 {
             render_pipeline,
@@ -117,6 +30,109 @@ impl D2 {
             geometry_buffers: vec![],
             context: context.clone(),
         }
+    }
+
+    fn create_pipeline(context: &Context) -> RenderPipeline {
+        let context = context.read().unwrap();
+        let device = &context.device;
+
+        let binding_type = BindingType::Buffer {
+            ty: BufferBindingType::Uniform,
+            has_dynamic_offset: false,
+            min_binding_size: wgpu::BufferSize::new(64),
+        };
+
+        let entries = &[BindGroupLayoutEntry {
+            binding: 0,
+            visibility: ShaderStages::VERTEX,
+            ty: binding_type,
+            count: None,
+        }];
+
+        let bind_group_layout = device.create_bind_group_layout(&BindGroupLayoutDescriptor {
+            label: None,
+            entries,
+        });
+
+        let pipeline_layout = device.create_pipeline_layout(&PipelineLayoutDescriptor {
+            label: None,
+            bind_group_layouts: &[&bind_group_layout],
+            push_constant_ranges: &[],
+        });
+
+        let wgsl = wgpu::include_wgsl!("shader.wgsl");
+        let shader = device.create_shader_module(wgsl);
+
+        let vertex_attributes = [VertexAttribute {
+            format: wgpu::VertexFormat::Float32x4,
+            offset: 0,
+            shader_location: 0,
+        }];
+
+        let vertex_buffer_layouts = [VertexBufferLayout {
+            array_stride: 4 * 4,
+            step_mode: wgpu::VertexStepMode::Vertex,
+            attributes: &vertex_attributes,
+        }];
+
+        let vertex_state = VertexState {
+            module: &shader,
+            entry_point: "vs_main",
+            buffers: &vertex_buffer_layouts,
+        };
+
+        let fragment_state = FragmentState {
+            module: &shader,
+            entry_point: "fs_main",
+            targets: &[Some(context.texture_format.into())],
+        };
+
+        let multisample_state = MultisampleState {
+            count: 4,
+            ..Default::default()
+        };
+
+        let descriptor = RenderPipelineDescriptor {
+            label: None,
+            layout: Some(&pipeline_layout),
+            vertex: vertex_state,
+            fragment: Some(fragment_state),
+            primitive: PrimitiveState::default(),
+            multisample: multisample_state,
+            depth_stencil: None,
+            multiview: None,
+        };
+
+        device.create_render_pipeline(&descriptor)
+    }
+
+    fn create_transform_bind_group(context: &Context, layout: &BindGroupLayout) -> BindGroup {
+        let context = context.read().unwrap();
+        let device = &context.device;
+        let surface_config = &context.surface_config;
+
+        let half_width = surface_config.width as f32 / 2.;
+        let half_height = surface_config.height as f32 / 2.;
+
+        let orthographic =
+            Mat4::orthographic_rh_gl(-half_width, half_width, -half_height, half_height, -2., 0.);
+
+        let transform_buffer = device.create_buffer_init(&BufferInitDescriptor {
+            label: None,
+            contents: bytemuck::cast_slice(orthographic.as_ref()),
+            usage: wgpu::BufferUsages::UNIFORM,
+        });
+
+        let entries = [BindGroupEntry {
+            binding: 0,
+            resource: transform_buffer.as_entire_binding(),
+        }];
+
+        device.create_bind_group(&BindGroupDescriptor {
+            label: None,
+            layout,
+            entries: &entries,
+        })
     }
 
     pub fn clear(&mut self) {
