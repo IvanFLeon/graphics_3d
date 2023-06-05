@@ -27,25 +27,21 @@ pub struct Geometry {
 }
 
 impl Geometry {
-    pub fn buffer(&self, ctx: &Context) -> GeometryBuffer {
-        let shared_context = ctx.0.read().unwrap();
+    pub fn buffer(&self, context: &Context) -> GeometryBuffer {
+        let context = context.read().unwrap();
 
         GeometryBuffer {
-            vertex_buffer: shared_context
-                .device
-                .create_buffer_init(&BufferInitDescriptor {
-                    label: None,
-                    contents: bytemuck::cast_slice(&self.vertexes[..]),
-                    usage: wgpu::BufferUsages::VERTEX,
-                }),
+            vertex_buffer: context.device.create_buffer_init(&BufferInitDescriptor {
+                label: None,
+                contents: bytemuck::cast_slice(&self.vertexes[..]),
+                usage: wgpu::BufferUsages::VERTEX,
+            }),
 
-            index_buffer: shared_context
-                .device
-                .create_buffer_init(&BufferInitDescriptor {
-                    label: None,
-                    contents: bytemuck::cast_slice(&self.indexes[..]),
-                    usage: wgpu::BufferUsages::INDEX,
-                }),
+            index_buffer: context.device.create_buffer_init(&BufferInitDescriptor {
+                label: None,
+                contents: bytemuck::cast_slice(&self.indexes[..]),
+                usage: wgpu::BufferUsages::INDEX,
+            }),
         }
     }
 }

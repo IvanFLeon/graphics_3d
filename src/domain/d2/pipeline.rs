@@ -19,10 +19,10 @@ pub struct D2 {
 
 impl D2 {
     pub fn new(context: &Context) -> D2 {
-        let shared_ctx = context.0.read().unwrap();
+        let shared = context.read().unwrap();
 
         let bind_group_layout =
-            shared_ctx
+            shared
                 .device
                 .create_bind_group_layout(&BindGroupLayoutDescriptor {
                     label: None,
@@ -39,7 +39,7 @@ impl D2 {
                 });
 
         let pipeline_layout =
-            shared_ctx
+            shared
                 .device
                 .create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
                     label: None,
@@ -47,7 +47,7 @@ impl D2 {
                     push_constant_ranges: &[],
                 });
 
-        let shader = shared_ctx
+        let shader = shared
             .device
             .create_shader_module(wgpu::include_wgsl!("shader.wgsl"));
 
@@ -64,7 +64,7 @@ impl D2 {
         }];
 
         let render_pipeline =
-            shared_ctx
+            shared
                 .device
                 .create_render_pipeline(&wgpu::RenderPipelineDescriptor {
                     label: None,
@@ -77,7 +77,7 @@ impl D2 {
                     fragment: Some(wgpu::FragmentState {
                         module: &shader,
                         entry_point: "fs_main",
-                        targets: &[Some(shared_ctx.texture_format.into())],
+                        targets: &[Some(shared.texture_format.into())],
                     }),
                     primitive: wgpu::PrimitiveState::default(),
                     depth_stencil: None,
@@ -88,19 +88,19 @@ impl D2 {
                     multiview: None,
                 });
 
-        let half_width = shared_ctx.surface_config.width as f32 / 2.;
-        let half_height = shared_ctx.surface_config.height as f32 / 2.;
+        let half_width = shared.surface_config.width as f32 / 2.;
+        let half_height = shared.surface_config.height as f32 / 2.;
 
         let orthographic =
             Mat4::orthographic_rh_gl(-half_width, half_width, -half_height, half_height, -2., 0.);
 
-        let transform_buffer = shared_ctx.device.create_buffer_init(&BufferInitDescriptor {
+        let transform_buffer = shared.device.create_buffer_init(&BufferInitDescriptor {
             label: None,
             contents: bytemuck::cast_slice(orthographic.as_ref()),
             usage: wgpu::BufferUsages::UNIFORM,
         });
 
-        let transform = shared_ctx.device.create_bind_group(&BindGroupDescriptor {
+        let transform = shared.device.create_bind_group(&BindGroupDescriptor {
             label: None,
             layout: &bind_group_layout,
             entries: &[BindGroupEntry {
@@ -109,7 +109,7 @@ impl D2 {
             }],
         });
 
-        drop(shared_ctx);
+        drop(shared);
 
         D2 {
             render_pipeline,
@@ -132,32 +132,28 @@ impl D2 {
     }
 
     pub fn translate(&mut self, x: f32, y: f32, z: f32) {
-        let shared_context = self.context.0.read().unwrap();
+        let context = self.context.read().unwrap();
 
-        let half_width = shared_context.surface_config.width as f32 / 2.;
-        let half_height = shared_context.surface_config.height as f32 / 2.;
+        let half_width = context.surface_config.width as f32 / 2.;
+        let half_height = context.surface_config.height as f32 / 2.;
         let mat =
             Mat4::orthographic_rh_gl(-half_width, half_width, -half_height, half_height, -2., 0.);
         let mat = mat * Mat4::from_translation(Vec3::new(x, y, z));
 
-        let transform_buffer = shared_context
-            .device
-            .create_buffer_init(&BufferInitDescriptor {
-                label: None,
-                contents: bytemuck::cast_slice(mat.as_ref()),
-                usage: wgpu::BufferUsages::UNIFORM,
-            });
+        let transform_buffer = context.device.create_buffer_init(&BufferInitDescriptor {
+            label: None,
+            contents: bytemuck::cast_slice(mat.as_ref()),
+            usage: wgpu::BufferUsages::UNIFORM,
+        });
 
-        let transform = shared_context
-            .device
-            .create_bind_group(&BindGroupDescriptor {
-                label: None,
-                layout: &self.render_pipeline.get_bind_group_layout(0),
-                entries: &[BindGroupEntry {
-                    binding: 0,
-                    resource: transform_buffer.as_entire_binding(),
-                }],
-            });
+        let transform = context.device.create_bind_group(&BindGroupDescriptor {
+            label: None,
+            layout: &self.render_pipeline.get_bind_group_layout(0),
+            entries: &[BindGroupEntry {
+                binding: 0,
+                resource: transform_buffer.as_entire_binding(),
+            }],
+        });
 
         self.transform = transform;
     }

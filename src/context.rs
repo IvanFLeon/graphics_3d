@@ -16,10 +16,9 @@ pub struct SharedContext {
     pub(crate) multisample_texture_view: TextureView,
 }
 
-#[derive(Clone)]
-pub struct Context(pub Arc<RwLock<SharedContext>>);
+pub type Context = Arc<RwLock<SharedContext>>;
 
-impl Context {
+impl SharedContext {
     pub async fn new(window: Window) -> Self {
         let instance = Instance::default();
 
@@ -68,7 +67,7 @@ impl Context {
 
         let multisample_texture_view = create_multisample_texture_view(&device, &surface_config);
 
-        Context(Arc::new(RwLock::new(SharedContext {
+        SharedContext {
             window,
             surface,
             surface_config,
@@ -76,57 +75,56 @@ impl Context {
             queue,
             texture_format,
             multisample_texture_view,
-        })))
+        }
     }
 
     pub fn resize(&mut self, size: PhysicalSize<u32>) {
-        let mut ctx = self.0.write().unwrap();
-        ctx.surface_config.width = size.width;
-        ctx.surface_config.height = size.height;
-        ctx.surface.configure(&ctx.device, &ctx.surface_config);
-        ctx.multisample_texture_view =
-            create_multisample_texture_view(&ctx.device, &ctx.surface_config);
+        self.surface_config.width = size.width;
+        self.surface_config.height = size.height;
+        self.surface.configure(&self.device, &self.surface_config);
+        self.multisample_texture_view =
+            create_multisample_texture_view(&self.device, &self.surface_config);
     }
+}
 
-    pub fn draw(&self, mut draw: impl FnMut(RenderPass, u32)) -> impl FnMut(u32) {
-        let ctx = self.0.clone();
+pub fn draw(context: &Context, mut draw: impl FnMut(RenderPass, u32)) -> impl FnMut(u32) {
+    let context = context.clone();
 
-        move |frame| {
-            let ctx = ctx.read().unwrap();
+    move |frame| {
+        let context = context.read().unwrap();
 
-            let surface_texture = ctx
-                .surface
-                .get_current_texture()
-                .expect("Failed to acquire next swapchain texture");
+        let surface_texture = context
+            .surface
+            .get_current_texture()
+            .expect("Failed to acquire next swapchain texture");
 
-            let view = surface_texture
-                .texture
-                .create_view(&TextureViewDescriptor::default());
+        let view = surface_texture
+            .texture
+            .create_view(&TextureViewDescriptor::default());
 
-            let mut encoder = ctx
-                .device
-                .create_command_encoder(&wgpu::CommandEncoderDescriptor::default());
+        let mut encoder = context
+            .device
+            .create_command_encoder(&wgpu::CommandEncoderDescriptor::default());
 
-            let render_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-                label: None,
-                color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                    view: &ctx.multisample_texture_view,
-                    resolve_target: Some(&view),
-                    ops: wgpu::Operations {
-                        load: wgpu::LoadOp::Clear(wgpu::Color::WHITE),
-                        store: true,
-                    },
-                })],
-                depth_stencil_attachment: None,
-            });
+        let render_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+            label: None,
+            color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                view: &context.multisample_texture_view,
+                resolve_target: Some(&view),
+                ops: wgpu::Operations {
+                    load: wgpu::LoadOp::Clear(wgpu::Color::WHITE),
+                    store: true,
+                },
+            })],
+            depth_stencil_attachment: None,
+        });
 
-            draw(render_pass, frame);
+        draw(render_pass, frame);
 
-            ctx.queue.submit(Some(encoder.finish()));
-            surface_texture.present();
+        context.queue.submit(Some(encoder.finish()));
+        surface_texture.present();
 
-            ctx.window.request_redraw();
-        }
+        context.window.request_redraw();
     }
 }
 
