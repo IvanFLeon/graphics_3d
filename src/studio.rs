@@ -5,7 +5,7 @@ use std::{
 
 use winit::{
     event::{Event, WindowEvent},
-    event_loop::{ControlFlow, EventLoop},
+    event_loop::EventLoop,
     window::{Window, WindowId},
 };
 
@@ -20,37 +20,30 @@ impl Studio {
     pub fn run(mut self: Self) {
         self.event_loop.run(move |event, _target, control_flow| {
             control_flow.set_poll();
-            Studio::match_event(&mut self.states, event, control_flow);
-        });
-    }
 
-    fn match_event(
-        states: &mut HashMap<WindowId, State>,
-        event: Event<()>,
-        control_flow: &mut ControlFlow,
-    ) {
-        match event {
-            Event::WindowEvent {
-                event: WindowEvent::CloseRequested,
-                ..
-            } => {
-                control_flow.set_exit();
-            }
-            Event::WindowEvent {
-                window_id,
-                event: WindowEvent::Resized(size),
-            } => {
-                let canvas = states.get_mut(&window_id).unwrap();
-                let mut shared = canvas.context.write().unwrap();
-                shared.resize(size);
-            }
-            Event::RedrawRequested(window_id) => {
-                let mut canvas = states.get_mut(&window_id).unwrap();
-                (canvas.redraw)(canvas.frame);
-                canvas.frame += 1;
-            }
-            _ => (),
-        };
+            match event {
+                Event::WindowEvent {
+                    event: WindowEvent::CloseRequested,
+                    ..
+                } => {
+                    control_flow.set_exit();
+                }
+                Event::WindowEvent {
+                    window_id,
+                    event: WindowEvent::Resized(size),
+                } => {
+                    let canvas = self.states.get_mut(&window_id).unwrap();
+                    let mut context = canvas.context.write().unwrap();
+                    context.resize(size);
+                }
+                Event::RedrawRequested(window_id) => {
+                    let mut canvas = self.states.get_mut(&window_id).unwrap();
+                    (canvas.redraw)(canvas.frame);
+                    canvas.frame += 1;
+                }
+                _ => (),
+            };
+        });
     }
 
     pub async fn canvas<F: FnMut(u32) + 'static>(self: &mut Self, setup: fn(Context) -> F) {
