@@ -1,5 +1,4 @@
 use std::sync::{Arc, RwLock};
-
 use wgpu::{
     CommandEncoderDescriptor, Device, DeviceDescriptor, Extent3d, Features, Instance, Limits,
     LoadOp, Operations, PowerPreference, PresentMode, Queue, RenderPass, RenderPassColorAttachment,
@@ -7,6 +6,8 @@ use wgpu::{
     TextureDimension, TextureFormat, TextureUsages, TextureView, TextureViewDescriptor,
 };
 use winit::{dpi::PhysicalSize, window::Window};
+
+use crate::color::Color;
 
 pub struct SharedContext {
     pub(crate) window: Window,
@@ -101,8 +102,13 @@ fn create_multisample_texture_view(device: &Device, config: &SurfaceConfiguratio
         .create_view(&view_descriptor)
 }
 
-pub fn draw(context: &Context, mut fn_draw: impl FnMut(RenderPass, u32)) -> impl FnMut(u32) {
+pub fn draw(
+    context: &Context,
+    clear: Color,
+    mut fn_draw: impl FnMut(RenderPass, u32),
+) -> impl FnMut(u32) {
     let context = context.clone();
+    let clear = clear.into();
 
     move |frame| {
         let context = context.read().unwrap();
@@ -122,7 +128,7 @@ pub fn draw(context: &Context, mut fn_draw: impl FnMut(RenderPass, u32)) -> impl
         let mut encoder = device.create_command_encoder(&descriptor);
 
         let operations = Operations {
-            load: LoadOp::Clear(wgpu::Color::WHITE),
+            load: LoadOp::Clear(clear),
             store: true,
         };
 

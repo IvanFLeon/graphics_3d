@@ -13,7 +13,13 @@ use crate::context::{Context, SharedContext};
 
 pub struct Studio {
     event_loop: EventLoop<()>,
-    states: HashMap<WindowId, State>,
+    canvases: HashMap<WindowId, Canvas>,
+}
+
+struct Canvas {
+    context: Context,
+    redraw: Box<dyn FnMut(u32)>,
+    frame: u32,
 }
 
 impl Studio {
@@ -22,24 +28,30 @@ impl Studio {
             control_flow.set_poll();
 
             match event {
-                Event::WindowEvent {
-                    event: WindowEvent::CloseRequested,
-                    ..
-                } => {
-                    control_flow.set_exit();
+                Event::RedrawRequested(window_id) => {
+                    let canvas = self.canvases.get_mut(&window_id);
+                    let mut canvas = canvas.expect("CanvasNotFoundForWindowId");
+
+                    (canvas.redraw)(canvas.frame);
+                    canvas.frame += 1;
                 }
                 Event::WindowEvent {
                     window_id,
                     event: WindowEvent::Resized(size),
                 } => {
-                    let canvas = self.states.get_mut(&window_id).unwrap();
-                    let mut context = canvas.context.write().unwrap();
+                    let canvas = self.canvases.get_mut(&window_id);
+                    let canvas = canvas.expect("CanvasNotFoundForWindowId");
+
+                    let context = canvas.context.write();
+                    let mut context = context.expect("ContextWriteLockFailed");
+
                     context.resize(size);
                 }
-                Event::RedrawRequested(window_id) => {
-                    let mut canvas = self.states.get_mut(&window_id).unwrap();
-                    (canvas.redraw)(canvas.frame);
-                    canvas.frame += 1;
+                Event::WindowEvent {
+                    event: WindowEvent::CloseRequested,
+                    ..
+                } => {
+                    control_flow.set_exit();
                 }
                 _ => (),
             };
@@ -47,33 +59,29 @@ impl Studio {
     }
 
     pub async fn canvas<F: FnMut(u32) + 'static>(self: &mut Self, setup: fn(Context) -> F) {
-        let window = Window::new(&self.event_loop).expect("Couldn't create window.");
+        let window = Window::new(&self.event_loop);
+        let window = window.expect("WindowCreateFailed");
         let window_id = window.id();
 
         let context = Arc::new(RwLock::new(SharedContext::new(window).await));
         let redraw = Box::new(setup(context.clone()));
 
-        let state = State {
-            context,
-            redraw,
-            frame: 0,
-        };
-
-        self.states.insert(window_id, state);
+        self.canvases.insert(
+            window_id,
+            Canvas {
+                context,
+                redraw,
+                frame: 0,
+            },
+        );
     }
-}
-
-struct State {
-    context: Context,
-    redraw: Box<dyn FnMut(u32)>,
-    frame: u32,
 }
 
 impl Default for Studio {
     fn default() -> Self {
         Studio {
             event_loop: EventLoop::new(),
-            states: HashMap::new(),
+            canvases: HashMap::new(),
         }
     }
 }

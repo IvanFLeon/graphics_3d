@@ -1,21 +1,36 @@
-use glam::{Mat4, Vec3};
+use glam::{Mat4, Vec3, Vec4};
 use wgpu::{
-    util::{BufferInitDescriptor, DeviceExt},
+    util::{BufferInitDescriptor, DeviceExt, DrawIndexedIndirect},
     BindGroup, BindGroupDescriptor, BindGroupEntry, BindGroupLayout, BindGroupLayoutDescriptor,
-    BindGroupLayoutEntry, BindingType, BufferBindingType, FragmentState, IndexFormat,
+    BindGroupLayoutEntry, BindingType, Buffer, BufferBindingType, FragmentState, IndexFormat,
     MultisampleState, PipelineLayoutDescriptor, PrimitiveState, RenderPass, RenderPipeline,
     RenderPipelineDescriptor, ShaderStages, VertexAttribute, VertexBufferLayout, VertexState,
 };
 
 use crate::context::Context;
 
-use super::{circle, geometry::GeometryBuffer};
+use super::{
+    circle,
+    geometry::{square, triangle, triangle_strip, TriangleStrip},
+    polygon,
+};
 
 pub struct D2 {
-    pub render_pipeline: RenderPipeline,
-    pub geometry_buffers: Vec<GeometryBuffer>,
-    pub transform: BindGroup,
+    //Config
     pub context: Context,
+    pub render_pipeline: RenderPipeline,
+    //Local Geometry Data
+    pub vertexes: Vec<Vec4>,
+    pub indexes: Vec<u32>,
+    pub instances: Vec<Mat4>,
+    pub draws: Vec<DrawIndexedIndirect>,
+    //Geometry Buffers
+    pub vertex_buffer: Option<Buffer>,
+    pub instance_buffer: Option<Buffer>,
+    pub index_buffer: Option<Buffer>,
+    pub draws_buffer: Option<Buffer>,
+    //Global
+    pub transform: BindGroup,
 }
 
 impl D2 {
@@ -23,12 +38,20 @@ impl D2 {
         let render_pipeline = D2::create_pipeline(context);
         let transform_layout = &render_pipeline.get_bind_group_layout(0);
         let transform = D2::create_transform_bind_group(context, transform_layout);
+        let instances = vec![Mat4::IDENTITY];
 
         D2 {
-            render_pipeline,
-            transform,
-            geometry_buffers: vec![],
             context: context.clone(),
+            render_pipeline,
+            vertexes: vec![],
+            indexes: vec![],
+            instances,
+            draws: vec![],
+            vertex_buffer: None,
+            instance_buffer: None,
+            index_buffer: None,
+            draws_buffer: None,
+            transform,
         }
     }
 
@@ -63,17 +86,49 @@ impl D2 {
         let wgsl = wgpu::include_wgsl!("shader.wgsl");
         let shader = device.create_shader_module(wgsl);
 
+        //Vertex Position
         let vertex_attributes = [VertexAttribute {
             format: wgpu::VertexFormat::Float32x4,
             offset: 0,
             shader_location: 0,
         }];
 
-        let vertex_buffer_layouts = [VertexBufferLayout {
-            array_stride: 4 * 4,
-            step_mode: wgpu::VertexStepMode::Vertex,
-            attributes: &vertex_attributes,
-        }];
+        //Local Transformation Matrix (Instanced)
+        let transform_attributes = [
+            VertexAttribute {
+                format: wgpu::VertexFormat::Float32x4,
+                offset: 0, //bytes no offset to 1st row
+                shader_location: 1,
+            },
+            VertexAttribute {
+                format: wgpu::VertexFormat::Float32x4,
+                offset: (4 * 4), //bytes offset to 2nd row
+                shader_location: 2,
+            },
+            VertexAttribute {
+                format: wgpu::VertexFormat::Float32x4,
+                offset: 2 * (4 * 4), //bytes offset to 3rd row
+                shader_location: 3,
+            },
+            VertexAttribute {
+                format: wgpu::VertexFormat::Float32x4,
+                offset: 3 * (4 * 4), //bytes offset to 4th row
+                shader_location: 4,
+            },
+        ];
+
+        let vertex_buffer_layouts = [
+            VertexBufferLayout {
+                array_stride: 4 * 4,
+                step_mode: wgpu::VertexStepMode::Vertex,
+                attributes: &vertex_attributes,
+            },
+            VertexBufferLayout {
+                array_stride: 4 * (4 * 4), //byte size of Mat4
+                step_mode: wgpu::VertexStepMode::Instance,
+                attributes: &transform_attributes,
+            },
+        ];
 
         let vertex_state = VertexState {
             module: &shader,
@@ -136,53 +191,126 @@ impl D2 {
     }
 
     pub fn clear(&mut self) {
-        self.geometry_buffers.clear();
+        self.vertexes.clear();
+        self.indexes.clear();
+        self.instances.clear();
+        self.draws.clear();
+        self.instances.push(Mat4::IDENTITY);
+    }
+    pub fn triangle(&mut self, a: (f32, f32), b: (f32, f32), c: (f32, f32)) {
+        self.add(triangle(a, b, c));
     }
 
-    pub fn push(&mut self, geometry_buffer: GeometryBuffer) {
-        self.geometry_buffers.push(geometry_buffer);
+    pub fn square(&mut self) {
+        self.add(square());
     }
 
-    pub fn circle(&mut self, res: u32) {
-        self.push(circle(res).buffer(&self.context));
+    pub fn circle(&mut self) {
+        self.add(circle());
     }
 
-    pub fn translate(&mut self, x: f32, y: f32, z: f32) {
+    pub fn polygon(&mut self, res: u32) {
+        self.add(polygon(res));
+    }
+
+    pub fn triangle_strip(&mut self, call: impl FnOnce(&mut TriangleStrip)) {
+        self.add(triangle_strip(call));
+    }
+
+    pub fn add(&mut self, geometry: (Vec<Vec4>, Vec<u32>)) {
+        let (mut vertexes, mut indexes) = geometry;
+
+        let draw = DrawIndexedIndirect {
+            vertex_offset: self.vertexes.len() as i32,
+            base_index: self.indexes.len() as u32,
+            base_instance: (self.instances.len() - 1) as u32,
+            vertex_count: indexes.len() as u32,
+            instance_count: 1,
+        };
+
+        self.vertexes.append(&mut vertexes);
+        self.indexes.append(&mut indexes);
+        self.draws.push(draw);
+    }
+
+    pub fn translate(&mut self, x: f32, y: f32) {
+        let mat = self
+            .instances
+            .last()
+            .unwrap()
+            .mul_mat4(&Mat4::from_translation(Vec3::new(x, y, 0.)));
+
+        self.instances.push(mat);
+    }
+
+    pub fn scale(&mut self, x: f32, y: f32) {
+        let mat = self
+            .instances
+            .last()
+            .unwrap()
+            .mul_mat4(&Mat4::from_scale(Vec3::new(x, y, 1.)));
+
+        self.instances.push(mat);
+    }
+
+    pub fn rotate(&mut self, th: f32) {
+        let mat = self
+            .instances
+            .last()
+            .unwrap()
+            .mul_mat4(&Mat4::from_rotation_z(th));
+
+        self.instances.push(mat);
+    }
+
+    pub fn render<'a>(&'a mut self, mut rpass: RenderPass<'a>) -> RenderPass {
         let context = self.context.read().unwrap();
-
-        let half_width = context.surface_config.width as f32 / 2.;
-        let half_height = context.surface_config.height as f32 / 2.;
-        let mat =
-            Mat4::orthographic_rh_gl(-half_width, half_width, -half_height, half_height, -2., 0.);
-        let mat = mat * Mat4::from_translation(Vec3::new(x, y, z));
-
-        let transform_buffer = context.device.create_buffer_init(&BufferInitDescriptor {
-            label: None,
-            contents: bytemuck::cast_slice(mat.as_ref()),
-            usage: wgpu::BufferUsages::UNIFORM,
-        });
-
-        let transform = context.device.create_bind_group(&BindGroupDescriptor {
-            label: None,
-            layout: &self.render_pipeline.get_bind_group_layout(0),
-            entries: &[BindGroupEntry {
-                binding: 0,
-                resource: transform_buffer.as_entire_binding(),
-            }],
-        });
-
-        self.transform = transform;
-    }
-
-    pub fn render<'a>(&'a self, mut rpass: RenderPass<'a>) -> RenderPass {
         rpass.set_pipeline(&self.render_pipeline);
         rpass.set_bind_group(0, &self.transform, &[]);
 
-        for g in &self.geometry_buffers {
-            rpass.set_vertex_buffer(0, g.vertex_buffer.slice(..));
-            rpass.set_index_buffer(g.index_buffer.slice(..), IndexFormat::Uint32);
-            rpass.draw_indexed(0..(g.index_buffer.size() as u32 / 4), 0, 0..1);
-        }
+        //Create buffers
+        self.vertex_buffer = Some(context.device.create_buffer_init(&BufferInitDescriptor {
+            label: None,
+            contents: bytemuck::cast_slice(&self.vertexes[..]),
+            usage: wgpu::BufferUsages::VERTEX,
+        }));
+
+        self.instance_buffer = Some(context.device.create_buffer_init(&BufferInitDescriptor {
+            label: None,
+            contents: bytemuck::cast_slice(&self.instances[..]),
+            usage: wgpu::BufferUsages::VERTEX,
+        }));
+
+        self.index_buffer = Some(context.device.create_buffer_init(&BufferInitDescriptor {
+            label: None,
+            contents: bytemuck::cast_slice(&self.indexes[..]),
+            usage: wgpu::BufferUsages::INDEX,
+        }));
+
+        let contents = &self
+            .draws
+            .iter()
+            .map(|f| f.as_bytes())
+            .collect::<Vec<_>>()
+            .concat();
+
+        self.draws_buffer = Some(context.device.create_buffer_init(&BufferInitDescriptor {
+            label: None,
+            contents: bytemuck::cast_slice(&contents[..]),
+            usage: wgpu::BufferUsages::INDIRECT,
+        }));
+
+        let vertex_buffer_slice = self.vertex_buffer.as_ref().unwrap().slice(..);
+        let instance_buffer_slice = self.instance_buffer.as_ref().unwrap().slice(..);
+        let index_buffer_slice = self.index_buffer.as_ref().unwrap().slice(..);
+        let draw_buffer = self.draws_buffer.as_ref().unwrap();
+
+        let count = self.draws.len() as u32;
+
+        rpass.set_vertex_buffer(0, vertex_buffer_slice);
+        rpass.set_vertex_buffer(1, instance_buffer_slice);
+        rpass.set_index_buffer(index_buffer_slice, IndexFormat::Uint32);
+        rpass.multi_draw_indexed_indirect(draw_buffer, 0, count);
 
         rpass
     }
