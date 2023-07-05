@@ -16,21 +16,29 @@ use super::{
 };
 
 pub struct D2 {
-    //Config
+    // Config
     pub context: Context,
     pub render_pipeline: RenderPipeline,
-    //Local Geometry Data
+    // Local Geometry Data
     pub vertexes: Vec<Vec4>,
     pub indexes: Vec<u32>,
     pub instances: Vec<Mat4>,
     pub draws: Vec<DrawIndexedIndirect>,
-    //Geometry Buffers
+    // Geometry Buffers
     pub vertex_buffer: Option<Buffer>,
     pub instance_buffer: Option<Buffer>,
     pub index_buffer: Option<Buffer>,
     pub draws_buffer: Option<Buffer>,
-    //Global
+    // Stack
+    pub stack: Vec<TransformInstance>,
+    // World/Camera
     pub transform: BindGroup,
+}
+
+#[derive(Clone, Copy)]
+pub struct TransformInstance {
+    transform: Mat4,
+    index: Option<usize>,
 }
 
 impl D2 {
@@ -38,19 +46,23 @@ impl D2 {
         let render_pipeline = D2::create_pipeline(context);
         let transform_layout = &render_pipeline.get_bind_group_layout(0);
         let transform = D2::create_transform_bind_group(context, transform_layout);
-        let instances = vec![Mat4::IDENTITY];
+        let stack = vec![TransformInstance {
+            transform: Mat4::IDENTITY,
+            index: None,
+        }];
 
         D2 {
             context: context.clone(),
             render_pipeline,
             vertexes: vec![],
             indexes: vec![],
-            instances,
+            instances: vec![],
             draws: vec![],
             vertex_buffer: None,
             instance_buffer: None,
             index_buffer: None,
             draws_buffer: None,
+            stack,
             transform,
         }
     }
@@ -195,7 +207,11 @@ impl D2 {
         self.indexes.clear();
         self.instances.clear();
         self.draws.clear();
-        self.instances.push(Mat4::IDENTITY);
+        self.stack.clear();
+        self.stack.push(TransformInstance {
+            transform: Mat4::IDENTITY,
+            index: None,
+        });
     }
     pub fn triangle(&mut self, a: (f32, f32), b: (f32, f32), c: (f32, f32)) {
         self.add(triangle(a, b, c));
@@ -220,10 +236,20 @@ impl D2 {
     pub fn add(&mut self, geometry: (Vec<Vec4>, Vec<u32>)) {
         let (mut vertexes, mut indexes) = geometry;
 
+        let last = self.stack.last_mut().unwrap();
+
+        let index = if let Some(index) = last.index {
+            index
+        } else {
+            self.instances.push(last.transform);
+            last.index = Some(self.instances.len() - 1);
+            last.index.unwrap()
+        };
+
         let draw = DrawIndexedIndirect {
             vertex_offset: self.vertexes.len() as i32,
             base_index: self.indexes.len() as u32,
-            base_instance: (self.instances.len() - 1) as u32,
+            base_instance: (index) as u32,
             vertex_count: indexes.len() as u32,
             instance_count: 1,
         };
@@ -233,34 +259,43 @@ impl D2 {
         self.draws.push(draw);
     }
 
-    pub fn translate(&mut self, x: f32, y: f32) {
-        let mat = self
-            .instances
-            .last()
-            .unwrap()
-            .mul_mat4(&Mat4::from_translation(Vec3::new(x, y, 0.)));
+    pub fn push(&mut self) {
+        let instance = *self.stack.last().clone().unwrap();
+        self.stack.push(instance);
+    }
 
-        self.instances.push(mat);
+    pub fn pop(&mut self) {
+        self.stack.pop();
+    }
+
+    pub fn translate(&mut self, x: f32, y: f32) {
+        let instance = self.stack.last_mut().unwrap();
+
+        let vec = Vec3::new(x, y, 0.);
+        instance.transform = instance.transform.mul_mat4(&Mat4::from_translation(vec));
+        instance.index = None;
     }
 
     pub fn scale(&mut self, x: f32, y: f32) {
-        let mat = self
-            .instances
-            .last()
-            .unwrap()
-            .mul_mat4(&Mat4::from_scale(Vec3::new(x, y, 1.)));
+        let instance = self.stack.last_mut().unwrap();
 
-        self.instances.push(mat);
+        let vec = Vec3::new(x, y, 0.);
+        instance.transform = instance.transform.mul_mat4(&Mat4::from_scale(vec));
+        instance.index = None;
     }
 
     pub fn rotate(&mut self, th: f32) {
-        let mat = self
-            .instances
-            .last()
-            .unwrap()
-            .mul_mat4(&Mat4::from_rotation_z(th));
+        let instance = self.stack.last_mut().unwrap();
 
-        self.instances.push(mat);
+        instance.transform = instance.transform.mul_mat4(&Mat4::from_rotation_z(th));
+        instance.index = None;
+    }
+
+    pub fn identity(&mut self) {
+        let instance = self.stack.last_mut().unwrap();
+
+        instance.transform = Mat4::IDENTITY;
+        instance.index = None;
     }
 
     pub fn render<'a>(&'a mut self, mut rpass: RenderPass<'a>) -> RenderPass {
