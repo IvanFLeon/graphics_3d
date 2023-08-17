@@ -15,9 +15,7 @@ use super::{
     polygon,
 };
 
-pub struct D2 {
-    // Config
-    pub context: Context,
+pub struct Renderer<'a> {
     pub render_pipeline: RenderPipeline,
     // Local Geometry Data
     pub vertexes: Vec<Vec4>,
@@ -41,8 +39,8 @@ pub struct TransformInstance {
     index: Option<usize>,
 }
 
-impl D2 {
-    pub fn new(context: &Context) -> D2 {
+impl<'a> D2<'a> {
+    pub fn new(context: Context) -> D2 {
         let render_pipeline = D2::create_pipeline(context);
         let transform_layout = &render_pipeline.get_bind_group_layout(0);
         let transform = D2::create_transform_bind_group(context, transform_layout);
@@ -52,7 +50,6 @@ impl D2 {
         }];
 
         D2 {
-            context: context.clone(),
             render_pipeline,
             vertexes: vec![],
             indexes: vec![],
@@ -68,7 +65,6 @@ impl D2 {
     }
 
     fn create_pipeline(context: &Context) -> RenderPipeline {
-        let context = context.read().unwrap();
         let device = &context.device;
 
         let binding_type = BindingType::Buffer {
@@ -174,7 +170,6 @@ impl D2 {
     }
 
     fn create_transform_bind_group(context: &Context, layout: &BindGroupLayout) -> BindGroup {
-        let context = context.read().unwrap();
         let device = &context.device;
         let surface_config = &context.surface_config;
 
@@ -298,29 +293,38 @@ impl D2 {
         instance.index = None;
     }
 
-    pub fn render<'a>(&'a mut self, mut rpass: RenderPass<'a>) -> RenderPass {
-        let context = self.context.read().unwrap();
+    pub fn render(&'a mut self, mut rpass: RenderPass<'a>) -> RenderPass {
         rpass.set_pipeline(&self.render_pipeline);
         rpass.set_bind_group(0, &self.transform, &[]);
 
         //Create buffers
-        self.vertex_buffer = Some(context.device.create_buffer_init(&BufferInitDescriptor {
-            label: None,
-            contents: bytemuck::cast_slice(&self.vertexes[..]),
-            usage: wgpu::BufferUsages::VERTEX,
-        }));
+        self.vertex_buffer = Some(
+            self.context
+                .device
+                .create_buffer_init(&BufferInitDescriptor {
+                    label: None,
+                    contents: bytemuck::cast_slice(&self.vertexes[..]),
+                    usage: wgpu::BufferUsages::VERTEX,
+                }),
+        );
 
-        self.instance_buffer = Some(context.device.create_buffer_init(&BufferInitDescriptor {
-            label: None,
-            contents: bytemuck::cast_slice(&self.instances[..]),
-            usage: wgpu::BufferUsages::VERTEX,
-        }));
+        self.instance_buffer = Some(self.context.device.create_buffer_init(
+            &BufferInitDescriptor {
+                label: None,
+                contents: bytemuck::cast_slice(&self.instances[..]),
+                usage: wgpu::BufferUsages::VERTEX,
+            },
+        ));
 
-        self.index_buffer = Some(context.device.create_buffer_init(&BufferInitDescriptor {
-            label: None,
-            contents: bytemuck::cast_slice(&self.indexes[..]),
-            usage: wgpu::BufferUsages::INDEX,
-        }));
+        self.index_buffer = Some(
+            self.context
+                .device
+                .create_buffer_init(&BufferInitDescriptor {
+                    label: None,
+                    contents: bytemuck::cast_slice(&self.indexes[..]),
+                    usage: wgpu::BufferUsages::INDEX,
+                }),
+        );
 
         let contents = &self
             .draws
@@ -329,11 +333,15 @@ impl D2 {
             .collect::<Vec<_>>()
             .concat();
 
-        self.draws_buffer = Some(context.device.create_buffer_init(&BufferInitDescriptor {
-            label: None,
-            contents: bytemuck::cast_slice(&contents[..]),
-            usage: wgpu::BufferUsages::INDIRECT,
-        }));
+        self.draws_buffer = Some(
+            self.context
+                .device
+                .create_buffer_init(&BufferInitDescriptor {
+                    label: None,
+                    contents: bytemuck::cast_slice(&contents[..]),
+                    usage: wgpu::BufferUsages::INDIRECT,
+                }),
+        );
 
         let vertex_buffer_slice = self.vertex_buffer.as_ref().unwrap().slice(..);
         let instance_buffer_slice = self.instance_buffer.as_ref().unwrap().slice(..);

@@ -1,15 +1,11 @@
-use std::sync::{Arc, RwLock};
 use wgpu::{
-    CommandEncoderDescriptor, Device, DeviceDescriptor, Extent3d, Features, Instance, Limits,
-    LoadOp, Operations, PowerPreference, PresentMode, Queue, RenderPass, RenderPassColorAttachment,
-    RenderPassDescriptor, RequestAdapterOptions, Surface, SurfaceConfiguration, TextureDescriptor,
+    Device, DeviceDescriptor, Extent3d, Features, Instance, Limits, PowerPreference, PresentMode,
+    Queue, RequestAdapterOptions, Surface, SurfaceConfiguration, TextureDescriptor,
     TextureDimension, TextureFormat, TextureUsages, TextureView, TextureViewDescriptor,
 };
 use winit::{dpi::PhysicalSize, window::Window};
 
-use crate::color::Color;
-
-pub struct SharedContext {
+pub struct Context {
     pub(crate) window: Window,
     pub(crate) surface: Surface,
     pub(crate) surface_config: SurfaceConfiguration,
@@ -19,9 +15,7 @@ pub struct SharedContext {
     pub(crate) multisample_texture_view: TextureView,
 }
 
-pub type Context = Arc<RwLock<SharedContext>>;
-
-impl SharedContext {
+impl Context {
     pub async fn new(window: Window) -> Self {
         let instance = Instance::default();
         let surface = unsafe { instance.create_surface(&window) }.unwrap();
@@ -57,7 +51,7 @@ impl SharedContext {
 
         let multisample_texture_view = create_multisample_texture_view(&device, &surface_config);
 
-        SharedContext {
+        Context {
             window,
             surface,
             surface_config,
@@ -100,56 +94,4 @@ fn create_multisample_texture_view(device: &Device, config: &SurfaceConfiguratio
     device
         .create_texture(&texture_descriptor)
         .create_view(&view_descriptor)
-}
-
-pub fn draw(
-    context: &Context,
-    clear: Color,
-    mut fn_draw: impl FnMut(RenderPass, u32),
-) -> impl FnMut(u32) {
-    let context = context.clone();
-    let clear = clear.into();
-
-    move |frame| {
-        let context = context.read().unwrap();
-
-        let queue = &context.queue;
-        let device = &context.device;
-        let window = &context.window;
-        let surface = &context.surface;
-        let multisample_texture_view = &context.multisample_texture_view;
-
-        let descriptor = TextureViewDescriptor::default();
-        let surface_texture = surface.get_current_texture().unwrap();
-        let texture = &surface_texture.texture;
-        let view = texture.create_view(&descriptor);
-
-        let descriptor = CommandEncoderDescriptor::default();
-        let mut encoder = device.create_command_encoder(&descriptor);
-
-        let operations = Operations {
-            load: LoadOp::Clear(clear),
-            store: true,
-        };
-
-        let color_attachment = RenderPassColorAttachment {
-            view: &multisample_texture_view,
-            resolve_target: Some(&view),
-            ops: operations,
-        };
-
-        let descriptor = RenderPassDescriptor {
-            label: None,
-            color_attachments: &[Some(color_attachment)],
-            depth_stencil_attachment: None,
-        };
-
-        let render_pass = encoder.begin_render_pass(&descriptor);
-
-        fn_draw(render_pass, frame);
-
-        queue.submit(Some(encoder.finish()));
-        surface_texture.present();
-        window.request_redraw();
-    }
 }
